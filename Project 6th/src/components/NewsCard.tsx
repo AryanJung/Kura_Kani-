@@ -14,116 +14,39 @@ interface NewsArticle {
 
 interface NewsCardProps {
   article: NewsArticle;
+  highlightSummary?: boolean;
 }
 
-const NewsCard: React.FC<NewsCardProps> = ({ article }) => {
+const NewsCard: React.FC<NewsCardProps> = ({ article, highlightSummary }) => {
   return (
     <div
-      style={{
-        width: '100%',
-        height: '320px', // Increased for longer summaries
-        position: 'relative',
-        perspective: '1000px',
-        marginBottom: '24px',
-      }}
+      className="w-full h-80 relative bg-white rounded-xl shadow-lg p-6 flex flex-col justify-between hover:shadow-2xl transition-shadow border border-blue-100"
     >
-      <div
-        style={{
-          width: '100%',
-          height: '100%',
-          position: 'relative',
-          transition: 'transform 0.6s ease-in-out',
-          transformStyle: 'preserve-3d',
-        }}
-        className="news-card-inner"
-      >
-        {/* Front of the card: Shows headline */}
-        <div
-          style={{
-            width: '100%',
-            height: '100%',
-            position: 'absolute',
-            backfaceVisibility: 'hidden',
-            background: 'linear-gradient(135deg, #ffffff 0%, #f3f4f6 100%)',
-            border: '1px solid #e2e8f0',
-            borderRadius: '12px',
-            boxShadow: '0 3px 10px rgba(0, 0, 0, 0.1)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            padding: '24px',
-            transition: 'box-shadow 0.3s ease',
-          }}
-          onMouseOver={(e) => (e.currentTarget.style.boxShadow = '0 6px 14px rgba(0, 0, 0, 0.15)')}
-          onMouseOut={(e) => (e.currentTarget.style.boxShadow = '0 3px 10px rgba(0, 0, 0, 0.1)')}
-        >
-          <h3
-            style={{
-              fontSize: '1.5rem',
-              fontWeight: '700',
-              color: '#1f2937',
-              textAlign: 'center',
-              lineHeight: '1.4',
-            }}
-          >
-            {article.title}
-          </h3>
+      <div>
+        <h3 className="text-xl font-bold text-gray-800 mb-2 text-center">{article.title}</h3>
+        <div className="flex justify-between items-center mb-2">
+          <span className="text-xs text-gray-400">{article.source}</span>
+          <span className="text-xs text-gray-400">{new Date(article.publishedAt).toLocaleDateString()}</span>
         </div>
-        {/* Back of the card: Shows summary and Read More link */}
-        <div
-          style={{
-            width: '100%',
-            height: '100%',
-            position: 'absolute',
-            backfaceVisibility: 'hidden',
-            background: 'linear-gradient(135deg, #e0f2fe 0%, #bae6fd 100%)',
-            border: '1px solid #bae6fd',
-            borderRadius: '12px',
-            boxShadow: '0 3px 10px rgba(0, 0, 0, 0.1)',
-            display: 'flex',
-            flexDirection: 'column',
-            alignItems: 'center',
-            justifyContent: 'center',
-            padding: '24px',
-            transform: 'rotateY(180deg)',
-          }}
+        {highlightSummary && article.summary && (
+          <div className="mt-4 p-4 bg-blue-50 border-l-4 border-blue-400 rounded relative">
+            <span className="absolute -top-3 left-2 bg-blue-400 text-white text-xs px-2 py-0.5 rounded shadow">Summary</span>
+            <p className="text-gray-700 text-sm mt-2 whitespace-pre-line">{article.summary}</p>
+          </div>
+        )}
+        {!highlightSummary && article.summary && (
+          <p className="text-gray-700 text-sm mt-2 whitespace-pre-line">{article.summary}</p>
+        )}
+      </div>
+      <div className="flex justify-end mt-4">
+        <a
+          href={article.url}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="text-blue-600 hover:underline font-semibold"
         >
-          <p
-            style={{
-              fontSize: '0.9rem', // Slightly smaller for longer text
-              color: '#374151',
-              textAlign: 'center',
-              marginBottom: '20px',
-              overflow: 'hidden',
-              textOverflow: 'ellipsis',
-              display: '-webkit-box',
-              WebkitLineClamp: 6, // Increased to 6 lines
-              WebkitBoxOrient: 'vertical',
-              lineHeight: '1.5',
-            }}
-          >
-            {article.summary || 'Unable to generate summary'}
-          </p>
-          <a
-            href={article.url}
-            target="_blank"
-            rel="noopener noreferrer"
-            style={{
-              color: '#1d4ed8',
-              textDecoration: 'none',
-              fontWeight: '600',
-              fontSize: '1rem',
-              padding: '10px 20px',
-              borderRadius: '6px',
-              backgroundColor: '#ffffff',
-              transition: 'background-color 0.3s ease',
-            }}
-            onMouseOver={(e) => (e.currentTarget.style.backgroundColor = '#f3f4f6')}
-            onMouseOut={(e) => (e.currentTarget.style.backgroundColor = '#ffffff')}
-          >
-            Read More
-          </a>
-        </div>
+          Read More
+        </a>
       </div>
     </div>
   );

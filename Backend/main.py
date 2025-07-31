@@ -1,5 +1,6 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Depends, status
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.security import HTTPBearer
 import feedparser
 from typing import List, Optional
 from pydantic import BaseModel
@@ -7,6 +8,23 @@ import uuid
 from transformers import pipeline
 from sentence_transformers import SentenceTransformer
 import logging
+from sqlalchemy.orm import Session
+from datetime import timedelta
+
+# Import our custom modules
+from database import get_db, User
+from auth import (
+    authenticate_user, 
+    create_access_token, 
+    get_current_user, 
+    get_current_admin_user,
+    get_password_hash,
+    get_user_by_email,
+    get_user_by_username,
+    verify_password,
+    ACCESS_TOKEN_EXPIRE_MINUTES
+)
+from models import UserCreate, UserLogin, UserResponse, Token, UserUpdate, PasswordChange
 
 app = FastAPI()
 
@@ -57,8 +75,280 @@ class SummarizeRequest(BaseModel):
 class SummarizeResponse(BaseModel):
     results: List[dict]
 
-summarizer = pipeline("summarization", model="facebook/bart-large-cnn")
-embedder = SentenceTransformer('all-MiniLM-L6-v2')
+class AdminStats(BaseModel):
+    total_users: int
+    active_users: int
+    verified_users: int
+    admin_users: int
+    total_articles: int
+
+class UserListResponse(BaseModel):
+    users: List[UserResponse]
+    total: int
+    page: int
+    limit: int
+    totalPages: int
+
+# Initialize ML models
+try:
+    summarizer = pipeline("summarization", model="facebook/bart-large-cnn")
+    embedder = SentenceTransformer('all-MiniLM-L6-v2')
+    logger.info("ML models loaded successfully")
+except Exception as e:
+    logger.warning(f"Failed to load ML models: {e}")
+    logger.warning("News summarization features will be disabled")
+    summarizer = None
+    embedder = None
+
+# Authentication endpoints
+@app.post("/api/auth/register", response_model=UserResponse)
+async def register(user_data: UserCreate, db: Session = Depends(get_db)):
+    """Register a new user."""
+    # Check if passwords match
+    if user_data.password != user_data.confirm_password:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Passwords do not match"
+        )
+    
+    # Check if user already exists
+    if get_user_by_email(db, user_data.email):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Email already registered"
+        )
+    
+    if get_user_by_username(db, user_data.username):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Username already taken"
+        )
+    
+    # Create new user
+    hashed_password = get_password_hash(user_data.password)
+    db_user = User(
+        email=user_data.email,
+        username=user_data.username,
+        full_name=user_data.full_name,
+        hashed_password=hashed_password
+    )
+    
+    db.add(db_user)
+    db.commit()
+    db.refresh(db_user)
+    
+    return db_user
+
+@app.post("/api/auth/login", response_model=Token)
+async def login(user_credentials: UserLogin, db: Session = Depends(get_db)):
+    """Login user and return access token."""
+    user = authenticate_user(db, user_credentials.username, user_credentials.password)
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Incorrect username or password",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    
+    if not user.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Inactive user"
+        )
+    
+    access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+    access_token = create_access_token(
+        data={"sub": user.username, "is_admin": user.is_admin}, expires_delta=access_token_expires
+    )
+    
+    return {
+        "access_token": access_token,
+        "token_type": "bearer",
+        "user": user
+    }
+
+@app.get("/api/auth/me", response_model=UserResponse)
+async def get_current_user_info(current_user: User = Depends(get_current_user)):
+    """Get current user information."""
+    return current_user
+
+@app.put("/api/auth/update", response_model=UserResponse)
+async def update_user(
+    user_update: UserUpdate,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Update user information."""
+    if user_update.email and user_update.email != current_user.email:
+        if get_user_by_email(db, user_update.email):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Email already registered"
+            )
+        current_user.email = user_update.email
+    
+    if user_update.full_name:
+        current_user.full_name = user_update.full_name
+    
+    db.commit()
+    db.refresh(current_user)
+    return current_user
+
+@app.post("/api/auth/change-password")
+async def change_password(
+    password_data: PasswordChange,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Change user password."""
+    if not verify_password(password_data.current_password, current_user.hashed_password):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Current password is incorrect"
+        )
+    
+    if password_data.new_password != password_data.confirm_new_password:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="New passwords do not match"
+        )
+    
+    current_user.hashed_password = get_password_hash(password_data.new_password)
+    db.commit()
+    
+    return {"message": "Password updated successfully"}
+
+# Admin endpoints
+@app.get("/admin")
+async def admin_panel(current_user: User = Depends(get_current_admin_user)):
+    """Admin panel main endpoint."""
+    return {"message": "Welcome to the admin panel!", "user": current_user.username}
+
+@app.get("/api/admin/stats", response_model=AdminStats)
+async def get_admin_stats(
+    current_user: User = Depends(get_current_admin_user),
+    db: Session = Depends(get_db)
+):
+    """Get admin statistics."""
+    total_users = db.query(User).count()
+    active_users = db.query(User).filter(User.is_active == True).count()
+    verified_users = db.query(User).filter(User.is_verified == True).count()
+    admin_users = db.query(User).filter(User.is_admin == True).count()
+    
+    # Get total articles from RSS feed
+    try:
+        feed = feedparser.parse("https://feeds.bbci.co.uk/news/rss.xml")
+        total_articles = len(feed.entries[:100])  # Limit to 100 articles
+    except:
+        total_articles = 0
+    
+    return AdminStats(
+        total_users=total_users,
+        active_users=active_users,
+        verified_users=verified_users,
+        admin_users=admin_users,
+        total_articles=total_articles
+    )
+
+@app.get("/api/admin/users", response_model=UserListResponse)
+async def get_users(
+    page: int = 1,
+    limit: int = 10,
+    current_user: User = Depends(get_current_admin_user),
+    db: Session = Depends(get_db)
+):
+    """Get all users (admin only)."""
+    total = db.query(User).count()
+    total_pages = (total + limit - 1) // limit
+    start = (page - 1) * limit
+    end = start + limit
+    
+    users = db.query(User).offset(start).limit(limit).all()
+    
+    return UserListResponse(
+        users=users,
+        total=total,
+        page=page,
+        limit=limit,
+        totalPages=total_pages
+    )
+
+@app.put("/api/admin/users/{user_id}/toggle-admin")
+async def toggle_admin_status(
+    user_id: int,
+    current_user: User = Depends(get_current_admin_user),
+    db: Session = Depends(get_db)
+):
+    """Toggle admin status for a user."""
+    if current_user.id == user_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Cannot modify your own admin status"
+        )
+    
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found"
+        )
+    
+    user.is_admin = not user.is_admin
+    db.commit()
+    db.refresh(user)
+    
+    return {"message": f"Admin status {'enabled' if user.is_admin else 'disabled'} for user {user.username}"}
+
+@app.put("/api/admin/users/{user_id}/toggle-active")
+async def toggle_user_active(
+    user_id: int,
+    current_user: User = Depends(get_current_admin_user),
+    db: Session = Depends(get_db)
+):
+    """Toggle active status for a user."""
+    if current_user.id == user_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Cannot modify your own active status"
+        )
+    
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found"
+        )
+    
+    user.is_active = not user.is_active
+    db.commit()
+    db.refresh(user)
+    
+    return {"message": f"Active status {'enabled' if user.is_active else 'disabled'} for user {user.username}"}
+
+@app.delete("/api/admin/users/{user_id}")
+async def delete_user(
+    user_id: int,
+    current_user: User = Depends(get_current_admin_user),
+    db: Session = Depends(get_db)
+):
+    """Delete a user (admin only)."""
+    if current_user.id == user_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Cannot delete your own account"
+        )
+    
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found"
+        )
+    
+    db.delete(user)
+    db.commit()
+    
+    return {"message": f"User {user.username} deleted successfully"}
 
 def categorize_article(text: str) -> Optional[str]:
     text = text.lower()
@@ -159,13 +449,18 @@ async def get_clusters(page: int = 1, limit: int = 10):
     # Summarize articles
     texts = [article.description if article.description != "No description available" else article.title for article in articles]
     summaries = []
-    for text in texts:
-        try:
-            summary = summarizer(text, max_length=100, min_length=30, do_sample=False)[0]["summary_text"]
-            summaries.append(summary)
-        except Exception as e:
-            logger.error(f"Error summarizing text: {str(e)}")
-            summaries.append("Summary not available")
+    if summarizer:
+        for text in texts:
+            try:
+                summary = summarizer(text, max_length=100, min_length=30, do_sample=False)[0]["summary_text"]
+                summaries.append(summary)
+            except Exception as e:
+                logger.error(f"Error summarizing text: {str(e)}")
+                summaries.append("Summary not available")
+    else:
+        # If summarizer is not available, use truncated text
+        for text in texts:
+            summaries.append(text[:100] + "..." if len(text) > 100 else text)
 
     # Assign summaries to articles
     for article, summary in zip(articles, summaries):
@@ -241,6 +536,12 @@ async def search_news(q: str, page: int = 1, limit: int = 10):
 
 @app.post("/summarize", response_model=SummarizeResponse)
 async def summarize(request: SummarizeRequest):
+    if not summarizer:
+        raise HTTPException(
+            status_code=503, 
+            detail="Summarization service is not available. Please install PyTorch and transformers."
+        )
+    
     try:
         results = []
         for text in request.texts:

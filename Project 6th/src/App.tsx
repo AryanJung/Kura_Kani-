@@ -3,6 +3,8 @@ import { Routes, Route } from 'react-router-dom';
 import Navbar from './components/Navbar';
 import Sidebar from './components/Sidebar';
 import Footer from './components/Footer';
+import { AuthProvider, useAuth } from './contexts/AuthContext';
+import PreferencesModal from './components/PreferencesModal'; // (to be created)
 
 // Lazy load components
 const Home = lazy(() => import('./pages/Home'));
@@ -11,6 +13,7 @@ const Clusters = lazy(() => import('./pages/Clusters'));
 const LoginPage = lazy(() => import('./pages/LoginPage'));
 const SignUpPage = lazy(() => import('./pages/SignUpPage'));
 const AccountPage = lazy(() => import('./pages/AccountPage'));
+const AdminPage = lazy(() => import('./pages/AdminPage'));
 
 // Error Boundary Component
 class ErrorBoundary extends React.Component<
@@ -82,38 +85,53 @@ const NotFound = () => (
   </div>
 );
 
-const App: React.FC = () => {
-  const [filters, setFilters] = useState({
-    entertainment: true,
-    sports: false,
-    crime: true,
-    politics: false,
-  });
+const InnerApp: React.FC = () => {
+  const [showPreferences, setShowPreferences] = useState(false);
+  const { user } = useAuth();
 
   return (
-    <ErrorBoundary>
-      <div className="min-h-screen flex flex-col">
-        <Navbar />
-        <div className="flex-1 flex">
-          <main className="flex-1 p-8">
-            <Suspense fallback={<Loading />}>
-              <Routes>
-                <Route path="/" element={<Home filters={filters} />} />
-                <Route path="/search" element={<Search />} />
-                <Route path="/clusters" element={<Clusters />} />
-                <Route path="/login" element={<LoginPage />} />
-                <Route path="/signup" element={<SignUpPage />} />
-                <Route path="/account" element={<AccountPage />} />
-                <Route path="*" element={<NotFound />} />
-              </Routes>
-            </Suspense>
-          </main>
-          <Sidebar onFilterChange={setFilters} />
-        </div>
-        <Footer />
+    <div className="min-h-screen flex flex-col">
+      <Navbar>
+        {user && (
+          <button
+            className="ml-4 px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 transition"
+            onClick={() => setShowPreferences(true)}
+          >
+            Preferences
+          </button>
+        )}
+      </Navbar>
+      <div className="flex-1 flex">
+        <Sidebar />
+        <main className="flex-1 p-8">
+          <Suspense fallback={<Loading />}>
+            <Routes>
+              <Route path="/" element={<Home />} />
+              <Route path="/search" element={<Search />} />
+              <Route path="/clusters" element={<Clusters />} />
+              <Route path="/login" element={<LoginPage />} />
+              <Route path="/signup" element={<SignUpPage />} />
+              <Route path="/account" element={<AccountPage />} />
+              <Route path="/admin" element={<AdminPage />} />
+              <Route path="*" element={<NotFound />} />
+            </Routes>
+          </Suspense>
+        </main>
       </div>
-    </ErrorBoundary>
+      <Footer />
+      {showPreferences && (
+        <PreferencesModal onClose={() => setShowPreferences(false)} />
+      )}
+    </div>
   );
 };
+
+const App: React.FC = () => (
+  <ErrorBoundary>
+    <AuthProvider>
+      <InnerApp />
+    </AuthProvider>
+  </ErrorBoundary>
+);
 
 export default App;
