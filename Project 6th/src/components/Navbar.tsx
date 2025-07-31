@@ -1,12 +1,16 @@
 import React, { useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
-import { HomeIcon, SearchIcon, ViewGridIcon, MenuIcon, XIcon, UserCircleIcon } from '@heroicons/react/outline';
+import { HomeIcon, SearchIcon, ViewGridIcon, MenuIcon, XIcon, UserCircleIcon, LogoutIcon, CogIcon } from '@heroicons/react/outline';
+import { useAuth } from '../contexts/AuthContext';
 
-const Navbar: React.FC = () => {
+interface NavbarProps {
+  children?: React.ReactNode;
+}
+
+const Navbar: React.FC<NavbarProps> = ({ children }) => {
   const location = useLocation();
   const [isMenuOpen, setIsMenuOpen] = useState(false);
-  // This would be replaced with actual authentication state
-  const [isLoggedIn, setIsLoggedIn] = useState(false);
+  const { user, logout } = useAuth();
 
   const isActive = (path: string) => location.pathname === path;
 
@@ -29,25 +33,41 @@ const Navbar: React.FC = () => {
 
           {/* Desktop Navigation */}
           <div className="hidden md:flex items-center space-x-4">
-            {isLoggedIn ? (
-              <Link to="/account" className="flex items-center space-x-2">
-                <UserCircleIcon className="h-8 w-8" />
-                <span>Account</span>
-              </Link>
+            {user ? (
+              <div className="flex items-center space-x-4">
+                <span className="text-sm">Welcome, {user.username}!</span>
+                <Link to="/account" className="flex items-center space-x-2 hover:text-orange-200">
+                  <UserCircleIcon className="h-8 w-8" />
+                  <span>Account</span>
+                </Link>
+                {user.is_admin && (
+                  <Link to="/admin" className="flex items-center space-x-2 hover:text-orange-200">
+                    <CogIcon className="h-8 w-8" />
+                    <span>Admin</span>
+                  </Link>
+                )}
+                <button
+                  onClick={logout}
+                  className="flex items-center space-x-2 px-4 py-2 rounded-md text-sm font-medium bg-red-600 hover:bg-red-700 transition-colors duration-200"
+                >
+                  <LogoutIcon className="h-5 w-5" />
+                  <span>Logout</span>
+                </button>
+              </div>
             ) : (
               <>
                 <Link
-  to="/login"
-  className="px-4 py-2 rounded-md text-sm font-medium text-white bg-orange-500 hover:bg-orange-600 transition-colors duration-200"
->
-  Login
-</Link>
-
+                  to="/login"
+                  className="px-4 py-2 rounded-md text-sm font-medium text-white bg-orange-500 hover:bg-orange-600 transition-colors duration-200"
+                >
+                  Login
+                </Link>
                 <Link to="/signup" className="px-4 py-2 rounded-md text-sm font-medium bg-white text-accent-600 hover:bg-gray-100">
                   Sign Up
                 </Link>
               </>
             )}
+            {children}
           </div>
 
           {/* Mobile menu button */}
@@ -69,8 +89,12 @@ const Navbar: React.FC = () => {
         {isMenuOpen && (
           <div className="md:hidden">
             <div className="px-2 pt-2 pb-3 space-y-1">
-              {isLoggedIn ? (
-                 <Link
+              {user ? (
+                <>
+                  <div className="px-3 py-2 text-sm text-orange-200">
+                    Welcome, {user.username}!
+                  </div>
+                  <Link
                     to="/account"
                     className="flex items-center px-3 py-2 rounded-md text-base font-medium hover:bg-accent-700"
                     onClick={() => setIsMenuOpen(false)}
@@ -78,6 +102,27 @@ const Navbar: React.FC = () => {
                     <UserCircleIcon className="h-6 w-6 mr-2" />
                     Account
                   </Link>
+                  {user.is_admin && (
+                    <Link
+                      to="/admin"
+                      className="flex items-center px-3 py-2 rounded-md text-base font-medium hover:bg-accent-700"
+                      onClick={() => setIsMenuOpen(false)}
+                    >
+                      <CogIcon className="h-6 w-6 mr-2" />
+                      Admin
+                    </Link>
+                  )}
+                  <button
+                    onClick={() => {
+                      logout();
+                      setIsMenuOpen(false);
+                    }}
+                    className="flex items-center w-full px-3 py-2 rounded-md text-base font-medium hover:bg-accent-700"
+                  >
+                    <LogoutIcon className="h-6 w-6 mr-2" />
+                    Logout
+                  </button>
+                </>
               ) : (
                 <>
                   <Link
